@@ -10,6 +10,7 @@ SETTING=$3
 DATA_PATH=$4
 MODEL_NAME_PATH=$5
 MODEL_NAME=$(basename $MODEL_NAME_PATH)
+MAX_MODEL_LEN=${6:-16384}
 mkdir -p outputs/${MODEL_NAME}
 NUM=-1  # -1 means all data
 DEVICES=4,5,6,7
@@ -55,6 +56,7 @@ elif [ "$SETTING" == "mturn" ]; then
     --is_tower \
     --max_new_tokens 256 \
     --gpu_memory_utilization 0.9 \
+    --max_model_len "${MAX_MODEL_LEN}" \
     --lang_direction "${SRC_LANG}-${TGT_LANG}" \
     --data_num "${NUM}"
 elif [ "$SETTING" == "seg" ]; then
@@ -68,6 +70,7 @@ elif [ "$SETTING" == "seg" ]; then
     --is_tower \
     --max_new_tokens 256 \
     --gpu_memory_utilization 0.95 \
+    --max_model_len "${MAX_MODEL_LEN}" \
     --lang_direction "${SRC_LANG}-${TGT_LANG}" \
     --data_num "${NUM}"
 elif [ "$SETTING" == "single" ]; then
@@ -92,6 +95,7 @@ elif [ "$SETTING" == "mturn_context" ]; then
     --is_og \
     --is_provide_all_first \
     --gpu_memory_utilization 0.95 \
+    --max_model_len "${MAX_MODEL_LEN}" \
     --lang_direction "${SRC_LANG}-${TGT_LANG}" \
     --data_num "${NUM}"
 elif [ "$SETTING" == "mturn_icl_context" ]; then

@@ -1,0 +1,20 @@
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local editor settings
+.vscode/
+
+# Experiment outputs and logs
+outputs/
+result/
+logs/
+*.log
+
+# Local credentials
+.env
+.env.*
+!.env.example

@@ -1,0 +1,138 @@
+{
+  "dataset": "WMT24",
+  "direction": "en-zh",
+  "seed": 42,
+  "excluded": {
+    "canary": [
+      0
+    ],
+    "extreme_long_documents": [
+      33,
+      43
+    ]
+  },
+  "document_ids": [
+    133,
+    66,
+    55,
+    146,
+    87,
+    83,
+    80,
+    69,
+    41,
+    4,
+    37,
+    26,
+    3,
+    31,
+    36,
+    7,
+    5,
+    8,
+    23,
+    24
+  ],
+  "documents": [
+    {
+      "doc_id": 133,
+      "segments": 1,
+      "group": "short"
+    },
+    {
+      "doc_id": 66,
+      "segments": 1,
+      "group": "short"
+    },
+    {
+      "doc_id": 55,
+      "segments": 1,
+      "group": "short"
+    },
+    {
+      "doc_id": 146,
+      "segments": 1,
+      "group": "short"
+    },
+    {
+      "doc_id": 87,
+      "segments": 1,
+      "group": "short"
+    },
+    {
+      "doc_id": 83,
+      "segments": 1,
+      "group": "short"
+    },
+    {
+      "doc_id": 80,
+      "segments": 1,
+      "group": "short"
+    },
+    {
+      "doc_id": 69,
+      "segments": 1,
+      "group": "short"
+    },
+    {
+      "doc_id": 41,
+      "segments": 5,
+      "group": "medium"
+    },
+    {
+      "doc_id": 4,
+      "segments": 6,
+      "group": "medium"
+    },
+    {
+      "doc_id": 37,
+      "segments": 8,
+      "group": "medium"
+    },
+    {
+      "doc_id": 26,
+      "segments": 8,
+      "group": "medium"
+    },
+    {
+      "doc_id": 3,
+      "segments": 9,
+      "group": "medium"
+    },
+    {
+      "doc_id": 31,
+      "segments": 8,
+      "group": "medium"
+    },
+    {
+      "doc_id": 36,
+      "segments": 11,
+      "group": "long"
+    },
+    {
+      "doc_id": 7,
+      "segments": 14,
+      "group": "long"
+    },
+    {
+      "doc_id": 5,
+      "segments": 13,
+      "group": "long"
+    },
+    {
+      "doc_id": 8,
+      "segments": 12,
+      "group": "long"
+    },
+    {
+      "doc_id": 23,
+      "segments": 22,
+      "group": "long"
+    },
+    {
+      "doc_id": 24,
+      "segments": 14,
+      "group": "long"
+    }
+  ]
+}

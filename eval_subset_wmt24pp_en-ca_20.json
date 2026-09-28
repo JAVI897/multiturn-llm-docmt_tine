@@ -1,0 +1,32 @@
+{
+  "dataset": "WMT24++",
+  "language_direction": "en-ca",
+  "seed": 42,
+  "stratification": {
+    "short_1_2": 8,
+    "medium_3_10": 6,
+    "long_gt_10": 6
+  },
+  "document_ids": [
+    133,
+    66,
+    55,
+    146,
+    87,
+    83,
+    80,
+    69,
+    41,
+    4,
+    37,
+    26,
+    3,
+    31,
+    165,
+    8,
+    5,
+    169,
+    23,
+    24
+  ]
+}

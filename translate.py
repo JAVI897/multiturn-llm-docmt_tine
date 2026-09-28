@@ -91,8 +91,13 @@ def remove_triple_backlashes(trans_result):
     trans_result = trans_result.replace('```', '')
     return trans_result
 
+def remove_translation_prefix(text):
+    text = text.strip()
+    if text.startswith("Translation:"):
+        return text[len("Translation:"):].lstrip()
+    return text
 
-def get_trans_prompt(p, lang_direction, is_icl=False, is_tower=False, is_og=False, shot_num=3):
+def get_trans_prompt(p, lang_direction, is_icl=False, is_tower=False, is_og=False, shot_num=3,model_name=""):
     direct_mapping = {
         'de-en': ['German', 'English'],
         'en-de': ['English', 'German'],
@@ -103,6 +108,7 @@ def get_trans_prompt(p, lang_direction, is_icl=False, is_tower=False, is_og=Fals
         'fr-en': ['French', 'English'],
         'en-fr': ['English', 'French'],
         'en-es': ['English', 'Spanish'],
+        'en-ca': ['English', 'Catalan'],
         'es-en': ['Spanish', 'English'],
         'en-ru': ['English', 'Russian'],
         'en-hi': ['English', 'Hindi'],
@@ -115,6 +121,30 @@ def get_trans_prompt(p, lang_direction, is_icl=False, is_tower=False, is_og=Fals
         'x-en': ['source', 'English'],
     }
     source_lang, target_lang = direct_mapping[lang_direction]
+
+    if "salamandra" in model_name.lower():
+        salamandra_prompt = (
+            "Translate only the current text from {} into {}.\n"
+            "The complete document provided earlier is context only.\n"
+            "Do not translate the complete context document.\n"
+            "Do not repeat any previous translation.\n\n"
+            "<current_segment>\n"
+            "{}\n"
+            "</current_segment>\n\n"
+            "{}:"
+        )
+
+        return [
+            {
+                "role": "user",
+                "content": salamandra_prompt.format(
+                    source_lang,
+                    target_lang,
+                    p,
+                    target_lang,
+                ),
+            }
+        ]
     user_tower_prompt = 'Translate the following text from {} into {}. \n{}: {} \n{}:'
     user_prompt = 'You need to translate the input {} sentence to {}. Input: {} Please directly reply with the translation, start with "Translation:"'
     messages = [{'role': 'system',
@@ -198,7 +228,7 @@ def get_trans_prompt(p, lang_direction, is_icl=False, is_tower=False, is_og=Fals
                              })
             else:
                 messages.append({'role': 'user',
-                             'content': user_prompt.format(target_lang, source_lang, item['source']),
+                             'content': user_prompt.format(source_lang, target_lang, item['source']),
                              })
                 messages.append({'role': 'assistant',
                              'content': f"```{item['target']}```",
@@ -236,20 +266,48 @@ def save_as_txt(file_path, data):
         for item in data:
             f.write(item + '\n')
 
-def get_context_prompt(doct_text):
-    sys_prompt = 'You are a good translator.'
-    user_prompt = f'You will be given a document, and you need to do a translation sentence by sentence. The document is: \n {doct_text}'
-    messages = [{'role': 'system',
-                 'content': sys_prompt
-                 },
-                {'role': 'user',
-                 'content': user_prompt
-                 }]
-    return messages
+def get_context_prompt(doc_text, lang_direction, model_name):
+    language_map = {
+        "en-es": ("English", "Spanish"),
+        "en-ca": ("English", "Catalan"),
+        "en-zh": ("English", "Chinese"),
+    }
+
+    source_lang, target_lang = language_map[lang_direction]
+
+    return [
+        {
+            "role": "system",
+            "content": (
+                f"You are a {source_lang}-to-{target_lang} translation system. "
+                "Translate only the current segment in each user message. "
+                "Reply only with its translation."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "The following complete document is provided only as context. "
+                "Do not translate it now.\n\n"
+                "<document_context>\n"
+                f"{doc_text}\n"
+                "</document_context>"
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": "Context received.",
+        },
+    ]
 
 if __name__ == '__main__':
     # Set up argument parsing
     parser = argparse.ArgumentParser(description='Translate German texts to English using VLLM Agent.')
+    parser.add_argument(
+    "--doc_ids_file",
+    type=str,
+    default=None,
+    help="JSON manifest containing document_ids for evaluation subset")
     parser.add_argument('--target_file', type=str, default='../par3/par3_dataset_test/candide_fr/src_txts/candide_src.txt', help='File to load')
     parser.add_argument('--source_file', type=str, default='../par3/par3_dataset_test/candide_fr/trans_txts/candide_gt.txt', help='File to load')
     parser.add_argument('--output_file', type=str, default='reverse-translations.json', help='File to save translations')
@@ -281,23 +339,51 @@ if __name__ == '__main__':
     segmented_documents_target = process_document(args.target_file, args.is_sentence, args.is_segment or args.is_conversation, args.n_paragraph)
     #print('segmented_documents_de', segmented_documents_de)
     # if data_num is -1, use all data
-    if args.data_num == -1:
+    if args.doc_ids_file is not None:
+        with open(args.doc_ids_file, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        doc_ids = manifest["document_ids"]
+
+        processed_documents_source = [
+            segmented_documents_source[i] for i in doc_ids
+        ]
+        processed_documents_target = [
+            segmented_documents_target[i] for i in doc_ids
+        ]
+
+        print("Using evaluation subset from:", args.doc_ids_file)
+        print("Document IDs:", doc_ids)
+        print("Number of selected documents:", len(doc_ids))
+
+    elif args.data_num == -1:
         processed_documents_source = segmented_documents_source
         processed_documents_target = segmented_documents_target
+
     else:
         processed_documents_source = segmented_documents_source[:args.data_num]
         processed_documents_target = segmented_documents_target[:args.data_num]
-    #german_texts = [example['src'] for example in de_en_dataset]
-    #print('processed_documents_de', processed_documents_de)
+        #german_texts = [example['src'] for example in de_en_dataset]
+        #print('processed_documents_de', processed_documents_de)
     source_texts = processed_documents_source
     target_texts = processed_documents_target
     print('length of target texts', len(target_texts))
     references = target_texts
-    # Initialize the VLLM Agent, and set the generation kwargs
+        # Initialize the VLLM Agent, and set the generation kwargs
     vllm_kwargs = {
         "gpu_memory_utilization": args.gpu_memory_utilization,
         "max_model_len": args.max_model_len,
+        "max_num_seqs": args.max_num_seqs,
     }
+
+    if (
+        "llama-3.1" in args.model_name.lower()
+        or "salamandra" in args.model_name.lower()
+        or "eurollm" in args.model_name.lower()
+        or "gemma-7b" in args.model_name.lower()
+    ):
+        vllm_kwargs["dtype"] = "float16"
+
     generation_kwargs = {
         "temperature": args.temperature,
         "top_p": args.top_p,
@@ -334,10 +420,13 @@ if __name__ == '__main__':
                 doc_all_text = ''
                 for text in doc:
                     doc_all_text += text + ' '
-                context_prompt = get_context_prompt(doc_all_text)
+                context_prompt = get_context_prompt(doc_all_text,
+                    args.lang_direction,
+                    args.model_name,)
                 trans_prompt.append(context_prompt)
             for text in doc:
-                text = get_trans_prompt(text, args.lang_direction, args.is_icl, args.is_tower, args.is_og, args.shot_num)
+                text = get_trans_prompt(text, args.lang_direction, args.is_icl, args.is_tower, args.is_og, args.shot_num,
+    model_name=args.model_name,)
                 trans_prompt.append(text)
             trans_prompts.append(trans_prompt)
     # print('len(trans_prompts)', len(trans_prompts))
@@ -347,11 +436,12 @@ if __name__ == '__main__':
     # Initialize the VLLM Agent with the specified translation model
     translator = VllmAgent(model_name=args.model_name, model_kwargs=vllm_kwargs, generation_kwargs=generation_kwargs)
 
-    if args.is_segment:
+    if args.is_segment and not args.is_conversation:
         for doc in source_texts:
             trans_prompt = []
             for text in doc:
-                text = get_trans_prompt(text, args.lang_direction, args.is_icl, args.is_tower, args.is_og, args.shot_num)
+                text = get_trans_prompt(text, args.lang_direction, args.is_icl, args.is_tower, args.is_og, args.shot_num,
+    model_name=args.model_name,)
                 #trans_prompt.append(text)
                 if isinstance(tokenizer, GemmaTokenizer) or isinstance(tokenizer, GemmaTokenizerFast):
                     if text[0]['role'] == 'system':
@@ -367,7 +457,8 @@ if __name__ == '__main__':
             trans_prompts.append(trans_prompt)
     elif not args.is_segment and not args.is_conversation:
         for text in source_texts:
-            text = get_trans_prompt(text, args.lang_direction, args.is_icl, args.is_tower, args.is_og, args.shot_num)
+            text = get_trans_prompt(text, args.lang_direction, args.is_icl, args.is_tower, args.is_og, args.shot_num,
+    model_name=args.model_name,)
             # trans_prompts.append(text)
             if isinstance(tokenizer, GemmaTokenizer) or isinstance(tokenizer, GemmaTokenizerFast):
                 if text[0]['role'] == 'system':
@@ -382,53 +473,319 @@ if __name__ == '__main__':
             trans_prompts.append(text)
     # Prepare prompts for translation
     # Generate translations
-    translations = []
+        translations = []
     res_all_list = []
     translations_split = []
-    if args.is_conversation:
+
+    # Salamandra official context-aware multi-turn format
+    if (
+        args.is_conversation
+        and args.is_provide_all_first
+        and "salamandra" in args.model_name.lower()
+    ):
+        language_map = {
+            "en-es": ("English", "Spanish"),
+            "en-ca": ("English", "Catalan"),
+            "en-zh": ("English", "Chinese"),
+        }
+
+        source_lang, target_lang = language_map[
+            args.lang_direction
+        ]
+
+        for doc in tqdm(source_texts):
+            doc_all_text = " ".join(doc)
+
+            messages = []
+            translation_split = []
+            res_all = " "
+
+            for segment_index, segment in enumerate(doc):
+                if segment_index == 0:
+                    user_prompt = (
+                        f"What is the {target_lang} translation "
+                        "of the sentence below?\n"
+                        f"{segment}\n\n"
+                        "Use the following context to help your "
+                        "translation:\n"
+                        f"{doc_all_text}\n\n"
+                        "Translation:"
+                    )
+                else:
+                    user_prompt = (
+                        f"What is the {target_lang} translation "
+                        "of the next sentence below?\n"
+                        f"{segment}\n\n"
+                        "Use the source context provided earlier "
+                        "to help your translation.\n\n"
+                        "Translation:"
+                    )
+
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": user_prompt,
+                    }
+                )
+
+                formatted_prompt = (
+                    tokenizer.apply_chat_template(
+                        messages,
+                        add_generation_prompt=True,
+                        tokenize=False,
+                    )
+                )
+
+                input_tokens = tokenizer.encode(
+                    formatted_prompt,
+                    add_special_tokens=False,
+                )
+
+                if len(input_tokens) > args.max_model_len:
+                    raise ValueError(
+                        "Salamandra source-primed prompt "
+                        "exceeds max_model_len: "
+                        f"{len(input_tokens)} > "
+                        f"{args.max_model_len}"
+                    )
+
+                output = translator.generate(
+                    [formatted_prompt]
+                )[0][0]
+
+                output = remove_triple_backlashes(output)
+                output = remove_translation_prefix(output)
+                output = output.strip()
+
+                translation_split.append(output)
+                res_all += output + " "
+
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": output,
+                    }
+                )
+
+            translations.append(res_all)
+            translations_split.append(
+                translation_split
+            )
+
+    elif args.is_conversation:
         for trans_prompt in tqdm(trans_prompts):
             prev_prefix = []
-            res_all = ' '
+            res_all = " "
             translation_split = []
+
             if args.is_provide_all_first:
                 prev_prefix = trans_prompt.pop(0)
-                #prev_prefix = tokenizer.apply_chat_template(prev_prefix, add_generation_prompt=True, tokenize=False)
-            for text in trans_prompt:
-                #prev_prefix.append(text[-1])
-                # translation_split = []
-                if args.is_provide_all_first and len(prev_prefix) == 2:
-                    text.pop(0)
-                    prev_prefix.extend(text)
-                    text = tokenizer.apply_chat_template(prev_prefix, add_generation_prompt=True, tokenize=False)
-                elif len(prev_prefix) == 0:
-                    prev_prefix = text
-                    text = tokenizer.apply_chat_template(prev_prefix, add_generation_prompt=True, tokenize=False)
+                
+                if isinstance(tokenizer, GemmaTokenizer) or isinstance(tokenizer, GemmaTokenizerFast):
+                    if prev_prefix and prev_prefix[0]["role"] == "system":
+                        system_prompt = prev_prefix.pop(0)["content"]
+                        prev_prefix[0]["content"] = (
+                            system_prompt + "\n" + prev_prefix[0]["content"]
+                        )
+
+            for segment_index, current_messages in enumerate(trans_prompt):
+                if args.is_provide_all_first:
+                    if (
+                        current_messages
+                        and current_messages[0]["role"] == "system"
+                    ):
+                        current_messages = current_messages[1:]
+
+                    if (
+                        isinstance(tokenizer, GemmaTokenizer)
+                        or isinstance(tokenizer, GemmaTokenizerFast)
+                    ):
+                        if (
+                            prev_prefix
+                            and current_messages
+                            and prev_prefix[-1]["role"] == "user"
+                            and current_messages[0]["role"] == "user"
+                        ):
+                            prev_prefix[-1]["content"] += (
+                                "\n\n"
+                                + current_messages[0]["content"]
+                            )
+                            current_messages = current_messages[1:]
+
+                        prev_prefix.extend(
+                            copy.deepcopy(current_messages)
+                        )
+
+                    else:
+                        prev_prefix.extend(
+                            copy.deepcopy(current_messages)
+                        )
+
+                    messages = copy.deepcopy(prev_prefix)
+
+                    print("\n===== MESSAGE ROLES =====")
+                    for i, m in enumerate(messages):
+                        print(
+                            i,
+                            m["role"],
+                            repr(m["content"][:100]),
+                        )
+                    print("===== END MESSAGE ROLES =====\n")
+
+                    text = tokenizer.apply_chat_template(
+                        messages,
+                        add_generation_prompt=True,
+                        tokenize=False,
+                    )
+
+                    print("\n===== ACTUAL PROMPT =====")
+                    print(text)
+                    print("===== END PROMPT =====\n")
+
                 else:
-                    # avoid OOM errors when cases are too long, hyperparameter is heuristic
-                    if len(prev_prefix) > 50:
-                        prev_prefix = [prev_prefix[0]] + prev_prefix[-6:]
-                    prev_prefix.append(text[-1])
-                    text = tokenizer.apply_chat_template(prev_prefix, add_generation_prompt=True, tokenize=False)
-                #print(text)
-                output = translator.generate([text])[0][0]
-                #print(output[0])
-                res = {'role': 'assistant', 'content': output}
-                #print(output[0][0])
-                #print(prev_prefix)
+                    current_messages = copy.deepcopy(
+                        current_messages
+                    )
+
+                    if (
+                        current_messages
+                        and current_messages[0]["role"] == "system"
+                    ):
+                        if not prev_prefix:
+                            prev_prefix.append(
+                                current_messages.pop(0)
+                            )
+                        else:
+                            current_messages.pop(0)
+
+                    messages = (
+                        copy.deepcopy(prev_prefix)
+                        + current_messages
+                    )
+
+                    text = (
+                        tokenizer.apply_chat_template(
+                            messages,
+                            add_generation_prompt=True,
+                            tokenize=False,
+                        )
+                    )
+
+                    prev_prefix.extend(
+                        current_messages
+                    )
+
+                if "eurollm" in args.model_name.lower():
+                    while (
+                        len(
+                            tokenizer.encode(
+                                text,
+                                add_special_tokens=False,
+                            )
+                        )
+                        > 4000
+                    ):
+                        protected_length = (
+                            3
+                            if (
+                                args.is_provide_all_first
+                                and "salamandra"
+                                in args.model_name.lower()
+                            )
+                            else 2
+                        )
+
+                        if (
+                            len(prev_prefix)
+                            <= protected_length + 2
+                        ):
+                            raise ValueError(
+                                "The context and current "
+                                "request exceed the EuroLLM "
+                                "context budget."
+                            )
+
+                        del prev_prefix[
+                            protected_length:
+                            protected_length + 2
+                        ]
+
+                        text = (
+                            tokenizer.apply_chat_template(
+                                prev_prefix,
+                                add_generation_prompt=True,
+                                tokenize=False,
+                            )
+                        )
+
+                elif len(prev_prefix) > 50:
+                    if args.is_provide_all_first:
+                        protected_prefix = (
+                            prev_prefix[:3]
+                        )
+                        recent_history = (
+                            prev_prefix[3:][-6:]
+                        )
+                        prev_prefix = (
+                            protected_prefix
+                            + recent_history
+                        )
+                    else:
+                        prev_prefix = (
+                            [prev_prefix[0]]
+                            + prev_prefix[1:][-6:]
+                        )
+
+                    text = (
+                        tokenizer.apply_chat_template(
+                            prev_prefix,
+                            add_generation_prompt=True,
+                            tokenize=False,
+                        )
+                    )
+
+                output = translator.generate(
+                    [text]
+                )[0][0]
+
+                res = {
+                    "role": "assistant",
+                    "content": output,
+                }
+
                 prev_prefix.append(res)
-                #print('prev_prefix', prev_prefix)
-                #print('-'*100)
+
                 if args.is_og:
                     if not args.is_tower:
-                        res['content'] = remove_triple_backlashes(res['content'])
-                    res_all += res['content'] + ' '
-                    translation_split.append(res['content'])
+                        res["content"] = (
+                            remove_triple_backlashes(
+                                res["content"]
+                            )
+                        )
+
+                    res_all += res["content"] + " "
+                    translation_split.append(
+                        res["content"]
+                    )
                 else:
-                    res_all += res['content'][len('Translation: '):] + ' '
-                    translation_split.append(res['content'][len('Translation: '):])
+                    clean_res = (
+                        remove_translation_prefix(
+                            res["content"]
+                        )
+                    )
+
+                    res_all += clean_res + " "
+                    translation_split.append(
+                        clean_res
+                    )
+
                 del output, text
+
             translations.append(res_all)
-            translations_split.append(translation_split)
+            translations_split.append(
+                translation_split
+            )
+
     elif args.is_segment:
         batch_translation = []
         # input all paragraphs as a list or input one by one, there is no algorithm level difference but input whole is faster due to vllm.
@@ -461,12 +818,12 @@ if __name__ == '__main__':
                     if not args.is_tower:
                         batch_translations[i] = remove_triple_backlashes(batch_translations[i])
                 else:
-                    batch_translations[i] = batch_translations[i][0][len('Translation: '):]
+                    batch_translations[i] = remove_translation_prefix(batch_translations[i][0])
         translations.extend(batch_translations)
 
     # process the translations and references
     
-    if args.is_segment:
+    if args.is_segment and not args.is_conversation:
         translations_split = []
         for i in range(len(translations)):
             translation_split = []
@@ -477,7 +834,7 @@ if __name__ == '__main__':
                     if not args.is_tower:
                         translations[i][j] = remove_triple_backlashes(translations[i][j])
                 else:
-                    translations[i][j] = translations[i][j][0][len('Translation: '):]
+                    translations[i][j] = remove_translation_prefix(translations[i][j][0])
                 processed_translations += translations[i][j] + ' '
                 translation_split.append(translations[i][j])
             translations[i] = processed_translations

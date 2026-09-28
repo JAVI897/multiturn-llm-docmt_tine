@@ -12,7 +12,7 @@ MODEL_NAME_PATH=$5
 MODEL_NAME=$(basename $MODEL_NAME_PATH)
 mkdir -p outputs/${MODEL_NAME}
 NUM=-1  # -1 means all data
-DEVICES=4,5,6,7
+DEVICES=0,1,2,3
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 export CUDA_LAUNCH_BLOCKING=1
 
@@ -91,7 +91,7 @@ elif [ "$SETTING" == "mturn_context" ]; then
     --is_conversation \
     --is_og \
     --is_provide_all_first \
-    --gpu_memory_utilization 0.95 \
+    --gpu_memory_utilization 0.80 \
     --lang_direction "${SRC_LANG}-${TGT_LANG}" \
     --data_num "${NUM}"
 elif [ "$SETTING" == "mturn_icl_context" ]; then
