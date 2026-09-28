@@ -24,8 +24,8 @@ Updated: 2026-09-24 Europe/Zurich
 ## 2026-09-24 controlled En’Es / En’Ca run
 
 - Master PID: 1584185
-- Detached launcher: run_controlled_en_es_en_ca.sh
-- Status ledger: controlled_en_es_en_ca_status.tsv
+- Detached launcher: scripts/run_controlled_en_es_en_ca.sh
+- Status ledger: docs/experiments/controlled_en_es_en_ca_status.tsv
 - En’Es queue: GPUs 0,1,2,3
 - En’Ca queue: GPUs 4,5,6,7
 - Current state: Llama Segment generation running for both directions.

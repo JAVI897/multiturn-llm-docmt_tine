@@ -48,4 +48,4 @@ All 54 metric evaluations are PENDING until generation and structural validation
 
 ## Live detached run (2026-09-24)
 
-Smoke checks passed for Llama En’Es Segment, Qwen En’Ca Multi-turn, and Gemma En’Es Source-primed V2. Master PID 1584185 is running two server-resident queues. See controlled_en_es_en_ca_status.tsv and logs/codex_runs/controlled_master.log.
+Smoke checks passed for Llama En’Es Segment, Qwen En’Ca Multi-turn, and Gemma En’Es Source-primed V2. Master PID 1584185 is running two server-resident queues. See docs/experiments/controlled_en_es_en_ca_status.tsv and logs/codex_runs/controlled_master.log.
