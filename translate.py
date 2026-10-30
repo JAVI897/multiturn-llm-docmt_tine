@@ -21,10 +21,10 @@ def process_document(file_path, is_sentence=False, is_segment=False, n_paragraph
     # Open the file and read the content
     with open(file_path, 'r', encoding='utf-8') as file:
         content = file.read()
-    
+
     # Split the content based on the assumption that there's a blank line between documents
     documents = content.strip().split('\n\n')
-    
+
     # For each document, we'll join the lines (sentences) and return a list of processed documents
     if is_segment:
         print('is segment')
@@ -63,26 +63,26 @@ def process_document(file_path, is_sentence=False, is_segment=False, n_paragraph
     else:
         processed_documents = [' '.join(doc.split('\n')) for doc in documents]
         #print('processed_documents[0]', processed_documents[0])
-    
+
     return processed_documents
 
 def process_concact_document(documents, n):
     # Open the file and read the content
     concatenated_docs = [' '.join(documents[i:i+n]) for i in range(0, len(documents), n)]
-    
+
     return concatenated_docs
 
 def process_list_document(file_path):
     # Open the file and read the content
     with open(file_path, 'r', encoding='utf-8') as file:
         content = file.read()
-    
+
     # Split the content based on the assumption that there's a blank line between documents
     documents = content.strip().split('\n\n')
-    
+
     # For each document, we'll join the lines (sentences) and return a list of processed documents
     processed_documents = [ doc.split('\n') for doc in documents]
-    
+
     return processed_documents
 
 # a parse function for the translation result to remove triple backlashes:
@@ -122,6 +122,21 @@ def get_trans_prompt(p, lang_direction, is_icl=False, is_tower=False, is_og=Fals
     }
     source_lang, target_lang = direct_mapping[lang_direction]
 
+    if "translategemma" in model_name.lower():
+        src_code, tgt_code = lang_direction.split("-")
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "source_lang_code": src_code,
+                        "target_lang_code": tgt_code,
+                        "text": p,
+                    }
+                ],
+            }
+        ]
     if "salamandra" in model_name.lower():
         salamandra_prompt = (
             "Translate only the current text from {} into {}.\n"
@@ -145,7 +160,10 @@ def get_trans_prompt(p, lang_direction, is_icl=False, is_tower=False, is_og=Fals
                 ),
             }
         ]
-    user_tower_prompt = 'Translate the following text from {} into {}. \n{}: {} \n{}:'
+    user_tower_prompt = (     'Translate the following text from {} into {}. '
+                            'Output only the translation. Do not provide explanations, alternatives, or additional text.\n'
+                            '{}: {}\n{}:'
+    )
     user_prompt = 'You need to translate the input {} sentence to {}. Input: {} Please directly reply with the translation, start with "Translation:"'
     messages = [{'role': 'system',
                  'content': 'You are a good translator.'
@@ -248,11 +266,13 @@ def get_trans_prompt(p, lang_direction, is_icl=False, is_tower=False, is_og=Fals
                          })
         else:
             messages.append({'role': 'user',
-                     'content': user_prompt.format(target_lang, source_lang, p),
+                     'content': user_prompt.format(target_lang, source_lang, p)
+                     if is_og
+                     else user_prompt.format(source_lang, target_lang, p),
                      })
     # print('messages', messages)
     # print('-'*100)
-    
+
     return messages
 
 def save_jsonl(file_path, data):
@@ -274,6 +294,32 @@ def get_context_prompt(doc_text, lang_direction, model_name):
     }
 
     source_lang, target_lang = language_map[lang_direction]
+    if "translategemma" in model_name.lower():
+        src_code, tgt_code = lang_direction.split("-")
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "source_lang_code": src_code,
+                        "target_lang_code": tgt_code,
+                        "text": (
+                            "The following complete document is provided "
+                            "only as context. Do not translate it now.\n\n"
+                            "<document_context>\n"
+                            f"{doc_text}\n"
+                            "</document_context>"
+                        ),
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "Context received.",
+            },
+        ]
+
 
     return [
         {
@@ -398,7 +444,7 @@ if __name__ == '__main__':
         generation_kwargs["stop_token_ids"] = [128001, 128008, 128009] # <|end_of_text|>, <|eom_id|>, <|eot_id|>
     elif "llama" in args.model_name.lower():
         generation_kwargs["stop_token_ids"] = [128001, 128009]
-    
+
 
     # Perform translation in batches
     print('args.is_tower', args.is_tower)
@@ -430,7 +476,7 @@ if __name__ == '__main__':
                 trans_prompt.append(text)
             trans_prompts.append(trans_prompt)
     # print('len(trans_prompts)', len(trans_prompts))
-    
+
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
     ref_token_counts = []
     # Initialize the VLLM Agent with the specified translation model
@@ -452,7 +498,11 @@ if __name__ == '__main__':
                     #print(text[0]['content'])
                     text = f"[INST]{text[0]['content']}[/INST]"
                 else:
-                    text = tokenizer.apply_chat_template(text, add_generation_prompt=True, tokenize=False)
+                    text = tokenizer.apply_chat_template(text, add_generation_prompt=True, tokenize=False, **(
+                        {"enable_thinking":False}
+                        if "qwen3.5" in args.model_name.lower()
+                        else {}
+                    ))
                 trans_prompt.append(text)
             trans_prompts.append(trans_prompt)
     elif not args.is_segment and not args.is_conversation:
@@ -469,7 +519,12 @@ if __name__ == '__main__':
                 #print(text[0]['content'])
                 text = f"[INST]{text[0]['content']}[/INST]"
             else:
-                text = tokenizer.apply_chat_template(text, add_generation_prompt=True, tokenize=False)
+                text = tokenizer.apply_chat_template(text, add_generation_prompt=True, tokenize=False,
+                                                     **(
+                    {"enable_thinking":False}
+                    if "qwen3.5" in args.model_name.lower()
+                    else {}
+                ))
             trans_prompts.append(text)
     # Prepare prompts for translation
     # Generate translations
@@ -541,12 +596,30 @@ if __name__ == '__main__':
                     add_special_tokens=False,
                 )
 
-                if len(input_tokens) > args.max_model_len:
+                prompt_limit = args.max_model_len - args.max_new_tokens
+
+                while len(input_tokens) > prompt_limit and len(messages) > 2:
+                    # Preserve the first source-priming message
+                    # and the current user message.
+                    # Remove the oldest completed translation turn.
+                    del messages[1:3]
+
+                    formatted_prompt = tokenizer.apply_chat_template(
+                        messages,
+                        add_generation_prompt=True,
+                        tokenize=False,
+                    )
+
+                    input_tokens = tokenizer.encode(
+                        formatted_prompt,
+                        add_special_tokens=False,
+                    )
+
+                if len(input_tokens) > prompt_limit:
                     raise ValueError(
-                        "Salamandra source-primed prompt "
-                        "exceeds max_model_len: "
-                        f"{len(input_tokens)} > "
-                        f"{args.max_model_len}"
+                        "Salamandra source-primed prompt still exceeds "
+                        f"available context: {len(input_tokens)} > "
+                        f"{prompt_limit}"
                     )
 
                 output = translator.generate(
@@ -580,7 +653,7 @@ if __name__ == '__main__':
 
             if args.is_provide_all_first:
                 prev_prefix = trans_prompt.pop(0)
-                
+
                 if isinstance(tokenizer, GemmaTokenizer) or isinstance(tokenizer, GemmaTokenizerFast):
                     if prev_prefix and prev_prefix[0]["role"] == "system":
                         system_prompt = prev_prefix.pop(0)["content"]
@@ -636,6 +709,11 @@ if __name__ == '__main__':
                         messages,
                         add_generation_prompt=True,
                         tokenize=False,
+                        **(
+                            {"enable_thinking": False}
+                            if "qwen3.5" in args.model_name.lower()
+                            else {}
+                        )
                     )
 
                     print("\n===== ACTUAL PROMPT =====")
@@ -668,8 +746,12 @@ if __name__ == '__main__':
                             messages,
                             add_generation_prompt=True,
                             tokenize=False,
+                            **(
+                                {"enable_thinking": False}
+                                if "qwen3.5" in args.model_name.lower()
+                                else {}
                         )
-                    )
+                    ))
 
                     prev_prefix.extend(
                         current_messages
@@ -741,8 +823,12 @@ if __name__ == '__main__':
                             prev_prefix,
                             add_generation_prompt=True,
                             tokenize=False,
+                            **(
+                                {"enable_thinking": False}
+                                if "qwen3.5" in args.model_name.lower()
+                                else {}
                         )
-                    )
+                    ))
 
                 output = translator.generate(
                     [text]
@@ -822,7 +908,7 @@ if __name__ == '__main__':
         translations.extend(batch_translations)
 
     # process the translations and references
-    
+
     if args.is_segment and not args.is_conversation:
         translations_split = []
         for i in range(len(translations)):
@@ -848,7 +934,7 @@ if __name__ == '__main__':
             for j in range(len(references[i])):
                 processed_references += references[i][j] + ' '
             references[i] = processed_references
-    
+
     translated_token_counts = []
     ref_token_counts = []
     batch_encodings = tokenizer(translations, return_attention_mask=False, return_token_type_ids=False)
@@ -884,5 +970,11 @@ if __name__ == '__main__':
                     'token ratio': translated_token_count / ref_token_count,
                 }, ensure_ascii=False)
                 f.write(json_line + '\n')
-    print(f"Translations saved to {args.output_file}")
+    print(f"Translations saved to {args.output_file}", flush=True)
+
+    print("Translation finished. Keeping vLLM engine alive.", flush=True)
+
+    print("Shutting down vLLM engine...", flush=True)
+    translator.shutdown()
+    print("vLLM shutdown completed.", flush=True)
 

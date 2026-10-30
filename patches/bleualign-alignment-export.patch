@@ -1,0 +1,261 @@
+diff --git a/bleualign/align.py b/bleualign/align.py
+index 31732ab..c4f93a6 100755
+--- a/bleualign/align.py
++++ b/bleualign/align.py
+@@ -286,10 +286,169 @@ class Aligner:
+             i += 1
+ 
+       else:
+-        for i,(sourcelist,targetlist,translist1,translist2) in enumerate(collect_article(self.src,self.srctotarget,self.target,self.targettosrc,self.options)):
+-          self.log('reading in article ' + str(i) + ': ',1)
+-
+-          self.multialign = self.process(sourcelist,targetlist,translist1,translist2)
++        from collections import Counter
++
++        for i, (sourcelist, targetlist, translist1, translist2) in enumerate(
++            collect_article(
++                self.src,
++                self.srctotarget,
++                self.target,
++                self.targettosrc,
++                self.options
++            )
++        ):
++          self.log('reading in article ' + str(i) + ': ', 1)
++
++          # ==================================================
++          # 1. Run Bleualign
++          # ==================================================
++          self.multialign = self.process(
++              sourcelist,
++              targetlist,
++              translist1,
++              translist2
++          )
++
++          # ==================================================
++          # 2. Count alignment methods
++          # ==================================================
++          method_counts = Counter(
++              label
++              for pair, label in self.multialign
++          )
++
++          print(f"Article {i}: {dict(method_counts)}")
++
++          # ==================================================
++          # 3. Count alignment types
++          # ==================================================
++          type_counts = Counter(
++              (len(src_ids), len(ref_ids))
++              for (src_ids, ref_ids), label in self.multialign
++          )
++
++          print(
++              f"Article {i} alignment types: "
++              f"{dict(type_counts)}"
++          )
++
++          # ==================================================
++          # 4. Print all 1-to-2 alignment examples
++          # ==================================================
++          for (src_ids, ref_ids), label in self.multialign:
++
++            if len(src_ids) == 1 and len(ref_ids) == 2:
++
++              print(
++                  f"\n===== 1-to-2 ALIGNMENT | Article {i} ====="
++              )
++
++              print("Method:", label)
++
++              print("Source IDs:", src_ids)
++              print("Reference IDs:", ref_ids)
++
++              for src_id in src_ids:
++                print(
++                    "SOURCE:",
++                    sourcelist[src_id]
++                )
++
++              for ref_id in ref_ids:
++                print(
++                    "REFERENCE:",
++                    targetlist[ref_id]
++                )
++
++          # ==================================================
++          # Export structured sentence alignment (optional)
++          # ==================================================
++          import os
++          import json
++
++          export_path = os.environ.get("BLEUALIGN_EXPORT_JSONL")
++          metadata_path = os.environ.get("BLEUALIGN_ARTICLE_METADATA_JSONL")
++          export_stage = os.environ.get("BLEUALIGN_EXPORT_STAGE", "stage1")
++
++          if export_stage not in ("stage1", "stage2"):
++            raise ValueError(f"Unknown export stage: {export_stage}")
++
++          if export_path:
++            if not metadata_path:
++              raise ValueError(
++                  "BLEUALIGN_ARTICLE_METADATA_JSONL must be set"
++              )
++
++            if i == 0:
++              with open(metadata_path, encoding="utf-8") as f:
++                article_metadata = [
++                    json.loads(line) for line in f if line.strip()
++                ]
++
++              if len(article_metadata) == 0:
++                raise ValueError("Article metadata is empty")
++
++              self.article_metadata = article_metadata
++
++              # Initialize export file
++              open(export_path, "w", encoding="utf-8").close()
++
++            if i >= len(self.article_metadata):
++              if not sourcelist and not targetlist and not self.multialign:
++                continue
++              raise IndexError(
++                  f"Unexpected non-empty Article {i} without metadata"
++              )
++
++            metadata = self.article_metadata[i]
++
++            if sourcelist != metadata["sentences"]:
++              raise ValueError(
++                  f"Source sentences mismatch at Article {i}"
++              )
++
++            with open(export_path, "a", encoding="utf-8") as f:
++              for (src_ids, ref_ids), label in sorted(
++                  self.multialign,
++                  key=lambda item: item[0]
++              ):
++                if export_stage == "stage1":
++                  record = {
++                      "article_id": i,
++                      "doc_id": metadata["doc_id"],
++                      "segment_id": metadata["segment_id"],
++                      "source_sentence_ids": list(src_ids),
++                      "reference_sentence_ids": list(ref_ids),
++                      "source": " ".join(
++                          sourcelist[j] for j in src_ids
++                      ),
++                      "reference": " ".join(
++                          targetlist[j] for j in ref_ids
++                      ),
++                      "alignment_method": label
++                  }
++                else:
++                  record = {
++                      "article_id": i,
++                      "doc_id": metadata["doc_id"],
++                      "reference_sentence_ids": list(src_ids),
++                      "hypothesis_sentence_ids": list(ref_ids),
++                      "reference": " ".join(
++                          sourcelist[j] for j in src_ids
++                      ),
++                      "hypothesis": " ".join(
++                          targetlist[j] for j in ref_ids
++                      ),
++                      "alignment_method": label
++                  }
++
++                f.write(
++                    json.dumps(record, ensure_ascii=False) + "\n"
++                )
++
++          # ==================================================
++          # 5. Original Bleualign output logic
++          # ==================================================
+           if translist1:
+               translist = translist1[0]
+           else:
+@@ -297,11 +456,21 @@ class Aligner:
+                 translist = [item[0] for item in sourcelist]
+               else:
+                 translist = sourcelist
+-          self.printout(sourcelist, translist, targetlist)
++
++          self.printout(
++              sourcelist,
++              translist,
++              targetlist
++          )
++
+           if self.options['eval']:
+             self.log('evaluation ' + str(i))
+-            results[i] = evaluate(self.options, self.multialign,self.options['eval'][i],self.log)
+-
++            results[i] = evaluate(
++                self.options,
++                self.multialign,
++                self.options['eval'][i],
++                self.log
++            )
+       if self.out1:
+         self.out1.flush()
+       if self.out2:
+@@ -434,7 +603,7 @@ class Aligner:
+           if score > 0:
+             scores.append((score,refID,score))
+         scoredict[testID] = sorted(scores,key=itemgetter(0),reverse=True)[:self.options['maxalternatives']]
+-            
++          
+       return scoredict
+ 
+ 
+@@ -524,8 +693,32 @@ class Aligner:
+         else:
+             scorelist_cache[refset] = None
+               
+-        scoredict[testID] = sorted(scorelist,key=itemgetter(0),reverse=True)[:self.options['maxalternatives']]
+-        
++        scoredict[testID] = sorted(
++            scorelist,
++            key=itemgetter(0),
++            reverse=True
++        )[:self.options['maxalternatives']]
++
++        print("\n===== DEBUG eval_sents =====")
++        print("testID:", testID)
++        print("SOURCE CANDIDATE:", repr(testSent))
++
++        print("ALL TARGET CANDIDATES:")
++        for refID, refSent in enumerate(targetlist):
++            print(f"  targetID={refID}: {repr(refSent)}")
++
++        print("VALID BLEU CANDIDATES:")
++        if not scoredict[testID]:
++            print("  NO BLEU CANDIDATE")
++        else:
++            for score, refID, correct in scoredict[testID]:
++                print(
++                    f"  targetID={refID}",
++                    f"score={score}",
++                    f"correct={correct}",
++                    f"target={repr(targetlist[refID])}"
++                )
++
+       return scoredict
+ 
+ 
+@@ -785,6 +978,13 @@ class Aligner:
+               
+             churchaligns = self.gale_church(tempsrcgap,temptargetgap)
+ 
++            print("\n===== DEBUG GALE-CHURCH =====")
++            print("sourcegap:", sourcegap)
++            print("targetgap:", targetgap)
++            print("tempsrcgap:", tempsrcgap)
++            print("temptargetgap:", temptargetgap)
++            print("churchaligns:", churchaligns)
++
+             for src,target in churchaligns:
+               self.addtoAlignments((src,target),'GALECHURCH')
+             break

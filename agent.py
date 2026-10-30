@@ -1,75 +1,13 @@
-import json
-import os.path
-import random
+"""vLLM model loading, generation, and resource cleanup."""
 
-from openai import OpenAI
-from tqdm import tqdm, trange
-import argparse
-import os
-from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
-import torch
-import vllm
-import cohere
-import time
-from transformers import StoppingCriteria
-import multiprocessing
 import math
-# os.environ["VLLM_ATTENTION_BACKEND"] = "FLASHINFER" # this is recommended for gemma-2 models; otherwise it is not needed
+import multiprocessing
+import os
 
-# Support Hf, vLLM, GPT and cohere
-class KeyWordsCriteria(StoppingCriteria):
-    def __init__(self, stop_id_sequences):
-        assert isinstance(stop_id_sequences[0], list), "stop_id_sequences should be a list of list of ids"
-        self.stop_sequences = stop_id_sequences
+import vllm
+from transformers import AutoTokenizer
 
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
-        sequences_should_be_stopped = []
-        for i in range(input_ids.shape[0]):
-            sequence_should_be_stopped = False
-            for stop_sequence in self.stop_sequences:
-                if input_ids[i][-len(stop_sequence):].tolist() == stop_sequence:
-                    sequence_should_be_stopped = True
-                    break
-            sequences_should_be_stopped.append(sequence_should_be_stopped)
-        return all(sequences_should_be_stopped)
-    
-class HfAgent:
-    def __init__(self, model_name, model_kwargs, generation_kwargs):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.tokenizer.padding_side = "left"
-        self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            **model_kwargs
-        )
-        if 'gptq' in model_name.lower():
-            from auto_gptq import exllama_set_max_input_length
-            self.model = exllama_set_max_input_length(self.model, 8092)
-        self.generation_kwargs = generation_kwargs
-
-    @torch.no_grad()
-    def generate(self, prompt, stop_id_sequences=None):
-        tokenized_prompts = self.tokenizer(prompt, padding="longest", return_tensors="pt", add_special_tokens=True)
-        batch_input_ids = tokenized_prompts['input_ids']
-        tokenized_prompts = tokenized_prompts.to(self.model.device)
-        with torch.cuda.amp.autocast():
-            batch_outputs = self.model.generate(**tokenized_prompts, **self.generation_kwargs, stopping_criteria=[KeyWordsCriteria(stop_id_sequences)] if stop_id_sequences is not None else None)
-
-        if stop_id_sequences:
-            for output_idx in range(batch_outputs.shape[0]):
-                for token_idx in range(batch_input_ids.shape[1], batch_outputs.shape[1]):
-                    if any(batch_outputs[output_idx, token_idx: token_idx+len(stop_sequence)].tolist() == stop_sequence for stop_sequence in stop_id_sequences):
-                        batch_outputs[output_idx, token_idx:] = self.tokenizer.pad_token_id
-                        break
-
-        batch_outputs = self.tokenizer.batch_decode(batch_outputs, skip_special_tokens=True)
-        batch_prompts = self.tokenizer.batch_decode(batch_input_ids, skip_special_tokens=True)
-        batch_generations = [
-            output[len(prompt):] for prompt, output in zip(batch_prompts, batch_outputs)
-        ]
-        return batch_generations
-    
 class VllmAgent:
     def __init__(self, model_name, model_kwargs, generation_kwargs):
         # handle case when rank and data_parallel_size are both specified
@@ -88,11 +26,11 @@ class VllmAgent:
                 model_kwargs.pop("rank")
                 os.environ['CUDA_VISIBLE_DEVICES'] = str(self.rank)
             self.llm = vllm.LLM(
-                model=model_name, 
+                model=model_name,
                 tokenizer=model_name,
                 **model_kwargs
             )
-        
+
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model_name = model_name
         self.model_kwargs = model_kwargs
@@ -100,6 +38,18 @@ class VllmAgent:
         self.sampling_params = vllm.SamplingParams(
             **generation_kwargs
         )
+
+    def shutdown(self):
+        if self.llm is not None:
+            llm = self.llm
+            self.llm = None
+
+            # Release vLLM engine resources.
+            engine = getattr(llm, "llm_engine", None)
+            if engine is not None and hasattr(engine, "shutdown"):
+                engine.shutdown()
+
+            del llm
 
     def _generation_worker_main(self, rank, model_name, model_kwargs, sampling_params, prompts):
         os.environ['CUDA_VISIBLE_DEVICES'] = str(rank)
@@ -131,25 +81,3 @@ class VllmAgent:
         outputs = [prompt_to_output[p] if p in prompt_to_output else "" for p in prompt]
 
         return outputs
-
-class GptAgent:
-    def __init__(self, model_name="gpt-4o-mini"):
-        self.client = OpenAI()
-        self.model_name = model_name
-        print('self.model_name for openai', self.model_name)
-
-    def generate(self, prompt):
-        # print('Querying GPT-3.5-turbo...')
-        # print('prompt', prompt)
-        chat_completion = self.client.chat.completions.create(
-            messages=prompt,
-            model=self.model_name,
-            temperature=0,
-            top_p=1,
-            frequency_penalty=0,
-            presence_penalty=0,
-            max_tokens=16384
-        )
-        result = chat_completion.choices[0].message.content
-        # print('result', result)
-        return result.strip()
